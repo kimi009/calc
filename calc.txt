@@ -1,0 +1,314 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Text.RegularExpressions;
+
+namespace WindowsFormsApplication1
+{
+    public class CalculateExpress
+    {
+        //验证计算表达式 此正则只适用于C# 其他语言不支持
+        private static Regex calcExpress = new Regex(@"^\s*-?(?>(?<k>\(\s*-)?(?:\d+(?:\.\d+)?|[a-z]+)(?(k)\)(?<-k>))(?=\s*(?:[-+*/%^)]|$))|(?<!(?:^|\()\s*)[+*/%^](?=\s*[(a-zA-Z0-9])|-(?=\s*[(a-zA-Z0-9])|\s+|(?:[A-Z]+)?\((?!\s*\))(?<Open>)|\)(?=\s*(?:[-+*/%^)]|$))(?<-Open>))*(?(Open)(?!))$",RegexOptions.IgnoreCase);
+        private static Regex inBracket = new Regex(@"\(([0-9\+\-\*\/\.\^]+)\)");//匹配括号表达式
+        private static Regex twoNumberPow = new Regex(@"\(?(-?\d+(\.\d+)?)\)?([\^])\(?(-?\d+(\.\d+)?)\)?");//幂运算表达式
+        private static Regex twoNumberMD = new Regex(@"\(?(-?\d+(\.\d+)?)\)?([\*\/])\(?(-?\d+(\.\d+)?)\)?");//乘除运算表达式
+        private static Regex twoNumberAE = new Regex(@"\(?(-?\d+(\.\d+)?)\)?([+-])\(?(-?\d+(\.\d+)?)\)?");//加减运算表达式
+        private static Regex snRegex = new Regex(@"(-?\d+(\.\d+)?[Ee]\d+)");//科学计数法
+        //自定义函数列表
+        private IList<FunctionReflect> functions = new List<FunctionReflect>();
+
+        public IList<string> listInfo = new List<string>();
+
+        public IList<FunctionReflect> Functions
+        {
+            get { return functions; }
+            set { functions = value; }
+        }
+
+        //函数委托
+        public delegate string RunFunction(string[] args);
+
+        //sin 正弦函数
+        private string runFunctionSin(string[] args)
+        {
+            return Math.Sin(Convert.ToDouble(args[0])).ToString();
+        }
+
+        //cos 余弦函数
+        private string runFunctionCos(string[] args)
+        {
+            return Math.Cos(Convert.ToDouble(args[0])).ToString();
+        }
+
+        //tan 正切函数
+        private string runFunctionTan(string[] args)
+        {
+            return Math.Tan(Convert.ToDouble(args[0])).ToString();
+        }
+
+        //sqrt 开方函数
+        private string runFunctionSqrt(string[] args)
+        {
+            return Math.Sqrt(Convert.ToDouble(args[0])).ToString();
+        }
+
+        //自定义函数类
+        public class FunctionReflect
+        {
+            public FunctionReflect(Regex regx, RunFunction runFun)
+            {
+                this.FunRegex = regx;
+                this.FunDelegate = runFun;
+            }
+
+            public FunctionReflect(string funname, RunFunction runFun)
+            {
+                this.FunRegex = buildFunctionRegx(funname);
+                this.FunDelegate = runFun;
+            }
+
+            //自定义函数正则 用于计算时匹配表达式
+            public Regex FunRegex { get; set; }
+
+            //函数执行委托
+            public RunFunction FunDelegate { get; set; }
+
+            //根据函数名创建正则表达式 格式为 函数名(数字)
+            private Regex buildFunctionRegx(string funName)
+            {
+                string regex = funName + @"\(([0-9\+\-\*\/\.\^\(\)]+?)\)";
+                return new Regex(regex);
+            }
+        }
+
+        //注册函数
+        private void functionRegxRegister()
+        {
+            FunctionReflect funRef = null;
+
+            funRef = new FunctionReflect("sin", runFunctionSin); functions.Add(funRef);
+            funRef = new FunctionReflect("cos", runFunctionCos); functions.Add(funRef);
+            funRef = new FunctionReflect("tan", runFunctionTan); functions.Add(funRef);
+            funRef = new FunctionReflect("sqrt", runFunctionSqrt); functions.Add(funRef);
+
+        }
+
+        //判断是否存在自定义函数
+        private bool hasFunction(string exp)
+        {
+            bool result = false;
+            foreach (FunctionReflect fr in functions)
+            {
+                if (fr.FunRegex.Match(exp).Success)
+                {
+                    result = true;
+                    break;
+                }
+            }
+            return result;
+        }
+
+        //计算自定义函数
+        private string calcFunction(string exp)
+        {
+            Match m = null;
+            StringBuilder sbExpress = new StringBuilder(exp);
+            while (true)
+            {
+                if (!hasFunction(sbExpress.ToString()))
+                    break;
+
+                foreach (FunctionReflect fr in functions)
+                {
+                    while (true)
+                    {
+                        m = fr.FunRegex.Match(sbExpress.ToString());
+                        if (m.Success)
+                        {
+                            string repExp = m.Groups[0].Value;
+                            string[] calcExp = m.Groups[1].Value.Split(',');
+                            IList<string> args = new List<string>();
+                            foreach (string param in calcExp)
+                            {
+                                args.Add(CalcSimpleExpress(param));
+                            }
+                            string result = fr.FunDelegate(args.ToArray());
+                            sbExpress = sbExpress.Replace(repExp, result, m.Index, m.Length);
+                            listInfo.Add(repExp + " 计算后 " + sbExpress.ToString());
+                        }
+                        else
+                        {
+                            break;
+                        }
+                    }
+                }
+            }
+            return sbExpress.ToString();
+        }
+
+        //计算两个数（+-*/^）的结果
+        private string calcTwoNumber(string left, string oper, string right)
+        {
+            double leftValue = Convert.ToDouble(left);
+            double rightValue = Convert.ToDouble(right);
+            switch (oper)
+            {
+                case "+": return (leftValue + rightValue).ToString();
+                case "-": return (leftValue - rightValue).ToString();
+                case "*": return (leftValue * rightValue).ToString();
+                case "/": return (leftValue / rightValue).ToString();
+                case "^": return Math.Pow(leftValue, rightValue).ToString();
+                default: return string.Empty;
+            }
+        }
+
+        //将科学计数法表达式转化为数字
+        private string snToNormal(string sn)
+        {
+            sn = sn.ToLower().Trim();
+            string[] temp = sn.Split('e');
+            double l = Convert.ToDouble(temp[0]);
+            double r = Convert.ToDouble(temp[1]);
+            string result = (Math.Pow(10, r) * l).ToString();
+            return result;
+        }
+
+        //替换表达式中的科学计数法表达式转化为数字
+        public string snReplace(string exp)
+        {
+            string express = exp.Trim();
+            StringBuilder sbExpress = new StringBuilder(express);
+            while (true)
+            {
+                Match m = snRegex.Match(sbExpress.ToString());
+                if (m.Success)
+                {
+                    string sn = m.Groups[0].Value;
+                    sbExpress = sbExpress.Replace(sn, snToNormal(sn), m.Index, m.Length);
+                    listInfo.Add(sn + " 计算后 " + sbExpress.ToString());
+                }
+                else
+                {
+                    break;
+                }
+
+            }
+
+
+            return sbExpress.ToString();
+        }
+
+        //计算不带括号的表达式
+        private string calcExpressNoBracket(String exp)
+        {
+            Match m = null;
+            string express = exp;
+
+            operationReplace(ref m, ref express, twoNumberPow);
+            operationReplace(ref m, ref express, twoNumberMD);
+            operationReplace(ref m, ref express, twoNumberAE);
+
+            return express;
+        }
+
+        //将表达式中的相邻的两个数计算出来(循环所有)
+        private void operationReplace(ref Match m, ref string express, Regex reg)
+        {
+            while (true)
+            {
+                m = reg.Match(express);
+                if (m.Success)
+                {
+                    express = calcReplace(m, express);
+                }
+                else
+                {
+                    break;
+                }
+
+            }
+        }
+
+        //将表达式中的相邻的两个数计算出来(仅供operationReplace调用)
+        private string calcReplace(Match m, string express)
+        {
+            StringBuilder sbExpress = new StringBuilder(express);
+            string twoNumberExp = m.Groups[0].Value;
+            string leftValue = m.Groups[1].Value;
+            string operatorStr = m.Groups[3].Value;
+            string rightValue = m.Groups[4].Value;
+            string result = calcTwoNumber(leftValue, operatorStr, rightValue);
+            sbExpress = sbExpress.Replace(twoNumberExp, result, m.Index, m.Length);
+            listInfo.Add(twoNumberExp + " 计算后 " + sbExpress.ToString());
+            return sbExpress.ToString();
+        }
+
+        // 计算括号内的表达式 如 1*(3-2) 的话就会把 3-2 计算出来 得到 1*1
+        private string clearBracket(string exp)
+        {
+            Match m = null;
+            StringBuilder sbExpress = new StringBuilder(exp);
+            while (true)
+            {
+                m = inBracket.Match(sbExpress.ToString());
+                if (m.Success)
+                {
+                    sbExpress = sbExpress.Replace(m.Groups[0].Value, calcExpressNoBracket(m.Groups[1].Value), m.Index, m.Length);
+                    listInfo.Add(m.Groups[0].Value + " 计算后 " + sbExpress.ToString());
+                }
+                else
+                    break;
+            }
+            return sbExpress.ToString();
+        }
+
+        //计算不带自定义函数的数学表达式(不能带科学计数法)
+        public string CalcSimpleExpress(string exp)
+        {
+            string express = exp.Trim();
+
+            //先计算括号内的
+            express = clearBracket(express);
+
+            //再计算括号外的
+            return calcExpressNoBracket(express);
+        }
+
+        //计算不带自定义函数的数学表达式(不能带科学计数法)
+        public string CalcNoFunExpress(string exp)
+        {
+            string express = exp.Trim();
+
+            //先计算括号内的
+            express = clearBracket(express);
+
+            //再计算括号外的
+            return calcExpressNoBracket(express);
+        }
+
+        //计算带自定义函数的数学表达式
+        public string CalcFunExpress(string exp)
+        {
+            //注册自定义函数
+            functionRegxRegister();
+
+            string express = exp.Trim();
+
+            //转换科学计数法
+            express = snReplace(express);
+
+            //计算自定义函数
+            express = calcFunction(express);
+
+            //计算最终结果
+            return CalcSimpleExpress(express);
+        }
+
+        //验证数学表达式是否合法
+        public static bool RegexCalcExpress(string exp)
+        {
+            return calcExpress.IsMatch(exp.Trim());
+        }
+    }
+}
